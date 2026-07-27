@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: skin-cancer-backend
+    env: python
+    # The repo root is the Vite frontend; the API lives in a subfolder.
+    rootDir: Skin_cancer_backend-main
+    buildCommand: pip install -r requirements.txt
+    # Render injects $PORT and will fail the health check if we don't bind it.
+    # Loading TF + the 76MB model takes well over gunicorn's default 30s boot
+    # timeout, and one worker is all the free tier's memory allows.
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+    healthCheckPath: /
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.13

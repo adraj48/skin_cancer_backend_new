@@ -1,0 +1,14 @@
+flask
+flask-cors
+gunicorn
+
+# Pinned to match best_model.keras, which was saved with Keras 2.15.0.
+# TF 2.16+ ships Keras 3, which cannot load this file's KANLayer config.
+tensorflow-cpu==2.15.0
+
+# TF 2.15 requires numpy 1.x; numpy 2 breaks it at import.
+numpy<2
+
+# headless build: no GUI/X11 libs, ~70MB smaller than opencv-python.
+# 4.10 is the last line that still builds against numpy 1.x.
+opencv-python-headless==4.10.0.84
