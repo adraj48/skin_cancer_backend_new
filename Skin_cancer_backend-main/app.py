@@ -11,12 +11,16 @@ class KANLayer(tf.keras.layers.Layer):
         self.units = units
 
     def build(self, input_shape):
+        # Names are required: the HDF5 format keys weights by name within a
+        # layer, so two unnamed add_weight() calls collide on save/load.
         self.kernel = self.add_weight(
+            name='kernel',
             shape=(input_shape[-1], self.units),
             initializer='glorot_uniform',
             trainable=True
         )
         self.bias = self.add_weight(
+            name='bias',
             shape=(self.units,),
             initializer='zeros',
             trainable=True
@@ -31,7 +35,13 @@ class KANLayer(tf.keras.layers.Layer):
         return config
 
 # ---- Load Your Model ----
-MODEL_PATH = "best_model.keras"
+# Legacy HDF5, not .keras. best_model.keras was saved on Windows by Keras 2.x,
+# which built the archive's internal HDF5 paths with os.path.join() -> backslash
+# separators. HDF5 treats "\" as an ordinary character rather than a group
+# separator, so on Linux the loader looks for "layers/stem_conv/vars/0", finds
+# nothing, and fails with "expected 1 variables, but received 0". This .h5 was
+# re-saved from that file on Windows and verified to give identical predictions.
+MODEL_PATH = "best_model.h5"
 model = tf.keras.models.load_model(MODEL_PATH, custom_objects={'KANLayer': KANLayer})
 
 # ---- Image Preprocessing ----
