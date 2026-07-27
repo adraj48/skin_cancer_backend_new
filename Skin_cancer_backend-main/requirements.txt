@@ -2,13 +2,15 @@ flask
 flask-cors
 gunicorn
 
-# Pinned to match best_model.keras, which was saved with Keras 2.15.0.
-# TF 2.16+ ships Keras 3, which cannot load this file's KANLayer config.
-tensorflow-cpu==2.15.0
+# TFLite interpreter only (~5MB), not the full TensorFlow runtime (~400MB).
+# TF plus an inference pass exceeded Render's 512MB free tier and the container
+# was OOM-killed on every request. model.tflite was converted from
+# best_model.h5 and verified to match it to 3.3e-07.
+tflite-runtime==2.14.0
 
-# TF 2.15 requires numpy 1.x; numpy 2 breaks it at import.
+# tflite-runtime 2.14 is built against the numpy 1.x ABI.
 numpy<2
 
-# headless build: no GUI/X11 libs, ~70MB smaller than opencv-python.
-# 4.10 is the last line that still builds against numpy 1.x.
+# headless: no GUI/X11 libs. Pinned because 5.x requires numpy>=2, which the
+# line above rules out.
 opencv-python-headless==4.10.0.84

@@ -1,48 +1,29 @@
-import tensorflow as tf
 import cv2
 import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-# ---- Custom KANLayer Definition ----
-class KANLayer(tf.keras.layers.Layer):
-    def __init__(self, units, **kwargs):
-        super().__init__(**kwargs)
-        self.units = units
+# ---- Interpreter ----
+# TFLite, not TensorFlow. The full TF runtime is ~400MB resident, which leaves
+# too little of Render's 512MB free tier for an inference pass -- the container
+# was OOM-killed mid-request every time. tflite-runtime is ~5MB.
+#
+# tflite-runtime ships Linux wheels only, so fall back to TensorFlow's bundled
+# interpreter for local development on Windows/macOS. Same graph either way.
+try:
+    from tflite_runtime.interpreter import Interpreter
+except ImportError:  # pragma: no cover - dev machines without tflite-runtime
+    import tensorflow as tf
+    Interpreter = tf.lite.Interpreter
 
-    def build(self, input_shape):
-        # Names are required: the HDF5 format keys weights by name within a
-        # layer, so two unnamed add_weight() calls collide on save/load.
-        self.kernel = self.add_weight(
-            name='kernel',
-            shape=(input_shape[-1], self.units),
-            initializer='glorot_uniform',
-            trainable=True
-        )
-        self.bias = self.add_weight(
-            name='bias',
-            shape=(self.units,),
-            initializer='zeros',
-            trainable=True
-        )
+# Converted from best_model.h5 float32, no quantisation: verified to match the
+# Keras model to 3.3e-07, so the 0.231 threshold below is still calibrated.
+MODEL_PATH = "model.tflite"
 
-    def call(self, inputs):
-        return tf.nn.silu(tf.matmul(inputs, self.kernel) + self.bias)
-
-    def get_config(self):
-        config = super().get_config()
-        config.update({'units': self.units})
-        return config
-
-# ---- Load Your Model ----
-# Legacy HDF5, not .keras. best_model.keras was saved on Windows by Keras 2.x,
-# which built the archive's internal HDF5 paths with os.path.join() -> backslash
-# separators. HDF5 treats "\" as an ordinary character rather than a group
-# separator, so on Linux the loader looks for "layers/stem_conv/vars/0", finds
-# nothing, and fails with "expected 1 variables, but received 0". This .h5 was
-# re-saved from that file on Windows and verified to give identical predictions.
-MODEL_PATH = "best_model.h5"
-model = tf.keras.models.load_model(MODEL_PATH, custom_objects={'KANLayer': KANLayer})
+interpreter = Interpreter(model_path=MODEL_PATH)
+interpreter.allocate_tensors()
+_input = interpreter.get_input_details()[0]
+_output = interpreter.get_output_details()[0]
 
 # ---- Image Preprocessing ----
 IMG_SIZE = 224  # Use your model's input size
@@ -57,6 +38,12 @@ def remove_hair(img):
     return inpainted
 
 def preprocess_image(image_bytes):
+    """Decode to a raw 0-255 float32 RGB tensor.
+
+    Deliberately no /255 or mean-subtraction here: the graph starts with
+    Rescaling(1/255) and Normalization(ImageNet mean/std) layers, so scaling
+    again would feed the network inputs it was never trained on.
+    """
     file_bytes = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     if img is None:
@@ -65,6 +52,12 @@ def preprocess_image(image_bytes):
     img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
     img = remove_hair(img)
     return img.astype(np.float32)
+
+def predict_one(img):
+    """Run a single image through the interpreter."""
+    interpreter.set_tensor(_input['index'], np.expand_dims(img, axis=0))
+    interpreter.invoke()
+    return float(interpreter.get_tensor(_output['index'])[0][0])
 
 # ---- Flask App Setup ----
 app = Flask(__name__)
@@ -83,10 +76,9 @@ def predict():
         img = preprocess_image(file.read())
     except ValueError:
         return jsonify({'error': 'Uploaded file is not a readable image'}), 400
-    img = np.expand_dims(img, axis=0)
-    pred = model.predict(img)[0][0]
+    pred = predict_one(img)
     result = "malignant" if pred >= 0.231 else "benign"
-    return jsonify({'probability': float(pred), 'result': result})
+    return jsonify({'probability': pred, 'result': result})
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False, port=8080)  # Changed port to 8080
